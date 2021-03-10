@@ -31,6 +31,8 @@ import (
 	"maunium.net/go/mautrix/id"
 
 	"maunium.net/go/mautrix-whatsapp/database"
+
+	"github.com/Rhymen/go-whatsapp"
 )
 
 type MatrixHandler struct {
@@ -210,10 +212,23 @@ func (mx *MatrixHandler) createPrivatePortalFromInvite(roomID id.RoomID, inviter
 	inviter.addPuppetToCommunity(puppet)
 }
 
+func (mx *MatrixHandler) SyncPuppet(user *User, puppet *Puppet) {
+	mx.log.Debugln("*** SyncPuppet: Puppet JID: ", puppet.JID, " - User MXID: ", user)
+	contact, ok := user.Conn.Store.Contacts[puppet.JID]
+	if !ok {
+		mx.log.Debugln("*** SyncPuppet : *NEW CONTACT* => creating a plain vanilla whatsapp.Contact with JID = ", puppet.JID)
+		contact = whatsapp.Contact{JID: puppet.JID}
+	}
+	// (WL) Sync possible new contact and also Subscribe to whatsapp events !
+	puppet.Sync(user, contact)
+	user.SubscribePresence(puppet.JID)
+}
+
 func (mx *MatrixHandler) HandlePuppetInvite(evt *event.Event, inviter *User, puppet *Puppet) {
 	intent := puppet.DefaultIntent()
 	members := mx.joinAndCheckMembers(evt, intent)
 	if members == nil {
+		mx.log.Warnln("*** HANDLE PUPPET INVITE: --- THE PUPPET PROBABLY IS NOT REGISTERED ON MATRIX AND NOT ON THE WHATSAPP CONTACT LIST ! ")
 		return
 	}
 	var hasBridgeBot, hasOtherUsers bool
@@ -266,6 +281,9 @@ func (mx *MatrixHandler) HandleMembership(evt *event.Event) {
 	portal := mx.bridge.GetPortalByMXID(evt.RoomID)
 	if portal == nil {
 		puppet := mx.bridge.GetPuppetByMXID(id.UserID(evt.GetStateKey()))
+
+		mx.SyncPuppet(user, puppet)
+
 		if content.Membership == event.MembershipInvite && puppet != nil {
 			mx.HandlePuppetInvite(evt, user, puppet)
 		}

@@ -664,6 +664,10 @@ func (user *User) syncPortals(chatMap map[string]whatsapp.Chat, createAll bool) 
 		}
 		portal := user.GetPortalByJID(chat.JID)
 
+		// (WL) Subscribe Presence of all JIDs ------------------------------------------------------------------------------
+		user.Conn.SubscribePresence(chat.JID)
+		// (WL) -------------------------------------------------------------------------------------------------------------
+
 		chats = append(chats, Chat{
 			Portal:          portal,
 			Contact:         user.Conn.Store.Contacts[chat.JID],
@@ -1048,9 +1052,13 @@ func (user *User) HandleCallInfo(info whatsapp.CallInfo) {
 
 func (user *User) HandlePresence(info whatsapp.PresenceEvent) {
 	puppet := user.bridge.GetPuppetByJID(info.SenderJID)
+	user.log.Debugln("*** HandlePresence: user: ", user.MXID, " - puppet: ", puppet.JID, " - presence info: ", info.Status)
+
 	switch info.Status {
 	case whatsapp.PresenceUnavailable:
 		_ = puppet.DefaultIntent().SetPresence("offline")
+		user.log.Debugln("*** HandlePresence: SET OFFLINE ! - puppet: ", puppet.JID)
+
 	case whatsapp.PresenceAvailable:
 		if len(puppet.typingIn) > 0 && puppet.typingAt+15 > time.Now().Unix() {
 			portal := user.bridge.GetPortalByMXID(puppet.typingIn)
@@ -1059,6 +1067,7 @@ func (user *User) HandlePresence(info whatsapp.PresenceEvent) {
 			puppet.typingAt = 0
 		} else {
 			_ = puppet.DefaultIntent().SetPresence("online")
+			user.log.Debugln("*** HandlePresence: SET ONLINE ! - puppet: ", puppet.JID)
 		}
 	case whatsapp.PresenceComposing:
 		portal := user.GetPortalByJID(info.JID)
