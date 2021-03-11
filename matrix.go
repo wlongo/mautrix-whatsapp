@@ -221,7 +221,7 @@ func (mx *MatrixHandler) SyncPuppet(user *User, puppet *Puppet) {
 	}
 	// (WL) Sync possible new contact and also Subscribe to whatsapp events !
 	puppet.Sync(user, contact)
-	user.SubscribePresence(puppet.JID)
+	user.Conn.SubscribePresence(puppet.JID)
 }
 
 func (mx *MatrixHandler) HandlePuppetInvite(evt *event.Event, inviter *User, puppet *Puppet) {
