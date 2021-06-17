@@ -213,6 +213,9 @@ func (mx *MatrixHandler) createPrivatePortalFromInvite(roomID id.RoomID, inviter
 }
 
 func (mx *MatrixHandler) SyncPuppet(user *User, puppet *Puppet) {
+	if puppet == nil { // # probably recently deleted !
+		return
+	}
 	mx.log.Debugln("*** SyncPuppet: Puppet JID: ", puppet.JID, " - User MXID: ", user)
 	contact, ok := user.Conn.Store.Contacts[puppet.JID]
 	if !ok {
