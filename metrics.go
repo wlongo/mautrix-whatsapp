@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -44,7 +45,9 @@ type MetricsHandler struct {
 	ctx          context.Context
 	stopRecorder func()
 
-	messageHandling         *prometheus.HistogramVec
+	matrixEventHandling     *prometheus.HistogramVec
+	whatsappMessageAge      prometheus.Histogram
+	whatsappMessageHandling *prometheus.HistogramVec
 	countCollection         prometheus.Histogram
 	disconnections          *prometheus.CounterVec
 	puppetCount             prometheus.Gauge
@@ -56,12 +59,15 @@ type MetricsHandler struct {
 	unencryptedGroupCount   prometheus.Gauge
 	unencryptedPrivateCount prometheus.Gauge
 
-	connected       prometheus.Gauge
-	connectedState  map[whatsapp.JID]bool
-	loggedIn        prometheus.Gauge
-	loggedInState   map[whatsapp.JID]bool
-	syncLocked      prometheus.Gauge
-	syncLockedState map[whatsapp.JID]bool
+	connected           prometheus.Gauge
+	connectedState      map[whatsapp.JID]bool
+	connectedStateLock  sync.Mutex
+	loggedIn            prometheus.Gauge
+	loggedInState       map[whatsapp.JID]bool
+	loggedInStateLock   sync.Mutex
+	syncLocked          prometheus.Gauge
+	syncLockedState     map[whatsapp.JID]bool
+	syncLockedStateLock sync.Mutex
 	bufferLength    *prometheus.GaugeVec
 }
 
@@ -76,10 +82,19 @@ func NewMetricsHandler(address string, log log.Logger, db *database.Database) *M
 		log:     log,
 		running: false,
 
-		messageHandling: promauto.NewHistogramVec(prometheus.HistogramOpts{
+		matrixEventHandling: promauto.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "matrix_event",
 			Help: "Time spent processing Matrix events",
 		}, []string{"event_type"}),
+		whatsappMessageAge: promauto.NewHistogram(prometheus.HistogramOpts{
+			Name:    "remote_event_age",
+			Help:    "Age of messages received from WhatsApp",
+			Buckets: []float64{1, 2, 3, 5, 7.5, 10, 20, 30, 60},
+		}),
+		whatsappMessageHandling: promauto.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "remote_event",
+			Help: "Time spent processing WhatsApp messages",
+		}, []string{"message_type"}),
 		countCollection: promauto.NewHistogram(prometheus.HistogramOpts{
 			Name: "whatsapp_count_collection",
 			Help: "Time spent collecting the whatsapp_*_total metrics",
@@ -130,16 +145,31 @@ func NewMetricsHandler(address string, log log.Logger, db *database.Database) *M
 
 func noop() {}
 
-func (mh *MetricsHandler) TrackEvent(eventType event.Type) func() {
+func (mh *MetricsHandler) TrackMatrixEvent(eventType event.Type) func() {
 	if !mh.running {
 		return noop
 	}
 	start := time.Now()
 	return func() {
 		duration := time.Now().Sub(start)
-		mh.messageHandling.
+		mh.matrixEventHandling.
 			With(prometheus.Labels{"event_type": eventType.Type}).
 			Observe(duration.Seconds())
+	}
+}
+
+func (mh *MetricsHandler) TrackWhatsAppMessage(timestamp uint64, messageType string) func() {
+	if !mh.running {
+		return noop
+	}
+
+	start := time.Now()
+	return func() {
+		duration := time.Now().Sub(start)
+		mh.whatsappMessageHandling.
+			With(prometheus.Labels{"message_type": messageType}).
+			Observe(duration.Seconds())
+		mh.whatsappMessageAge.Observe(time.Now().Sub(time.Unix(int64(timestamp), 0)).Seconds())
 	}
 }
 
@@ -154,6 +184,8 @@ func (mh *MetricsHandler) TrackLoginState(jid whatsapp.JID, loggedIn bool) {
 	if !mh.running {
 		return
 	}
+	mh.loggedInStateLock.Lock()
+	defer mh.loggedInStateLock.Unlock()
 	currentVal, ok := mh.loggedInState[jid]
 	if !ok || currentVal != loggedIn {
 		mh.loggedInState[jid] = loggedIn
@@ -169,6 +201,9 @@ func (mh *MetricsHandler) TrackConnectionState(jid whatsapp.JID, connected bool)
 	if !mh.running {
 		return
 	}
+
+	mh.connectedStateLock.Lock()
+	defer mh.connectedStateLock.Unlock()
 	currentVal, ok := mh.connectedState[jid]
 	if !ok || currentVal != connected {
 		mh.connectedState[jid] = connected
@@ -184,6 +219,8 @@ func (mh *MetricsHandler) TrackSyncLock(jid whatsapp.JID, locked bool) {
 	if !mh.running {
 		return
 	}
+	mh.syncLockedStateLock.Lock()
+	defer mh.syncLockedStateLock.Unlock()
 	currentVal, ok := mh.syncLockedState[jid]
 	if !ok || currentVal != locked {
 		mh.syncLockedState[jid] = locked

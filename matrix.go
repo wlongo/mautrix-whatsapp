@@ -30,9 +30,11 @@ import (
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
 
+//	"go.mau.fi/whatsmeow"
+//	"go.mau.fi/whatsmeow/types"
+
 	"maunium.net/go/mautrix-whatsapp/database"
 
-	"github.com/Rhymen/go-whatsapp"
 )
 
 type MatrixHandler struct {
@@ -62,7 +64,7 @@ func NewMatrixHandler(bridge *Bridge) *MatrixHandler {
 }
 
 func (mx *MatrixHandler) HandleEncryption(evt *event.Event) {
-	defer mx.bridge.Metrics.TrackEvent(evt.Type)()
+	defer mx.bridge.Metrics.TrackMatrixEvent(evt.Type)()
 	if evt.Content.AsEncryption().Algorithm != id.AlgorithmMegolmV1 {
 		return
 	}
@@ -94,6 +96,13 @@ func (mx *MatrixHandler) joinAndCheckMembers(evt *event.Event, intent *appservic
 		return nil
 	}
 	return members
+}
+
+func (mx *MatrixHandler) sendNoticeWithMarkdown(roomID id.RoomID, message string) (*mautrix.RespSendEvent, error) {
+	intent := mx.as.BotIntent()
+	content := format.RenderMarkdown(message, true, false)
+	content.MsgType = event.MsgNotice
+	return intent.SendMessageEvent(roomID, event.EventMessage, content)
 }
 
 func (mx *MatrixHandler) HandleBotInvite(evt *event.Event) {
@@ -136,10 +145,25 @@ func (mx *MatrixHandler) HandleBotInvite(evt *event.Event) {
 		return
 	}
 
+	_, _ = mx.sendNoticeWithMarkdown(evt.RoomID, mx.bridge.Config.Bridge.ManagementRoomText.Welcome)
+
 	if !hasPuppets && (len(user.ManagementRoom) == 0 || evt.Content.AsMember().IsDirect) {
 		user.SetManagementRoom(evt.RoomID)
-		_, _ = intent.SendNotice(user.ManagementRoom, "This room has been registered as your bridge management/status room. Send `help` to get a list of commands.")
+		_, _ = intent.SendNotice(user.ManagementRoom, "This room has been registered as your bridge management/status room.")
 		mx.log.Debugln(evt.RoomID, "registered as a management room with", evt.Sender)
+	}
+
+	if evt.RoomID == user.ManagementRoom {
+		if user.HasSession() {
+			_, _ = mx.sendNoticeWithMarkdown(evt.RoomID, mx.bridge.Config.Bridge.ManagementRoomText.WelcomeConnected)
+		} else {
+			_, _ = mx.sendNoticeWithMarkdown(evt.RoomID, mx.bridge.Config.Bridge.ManagementRoomText.WelcomeUnconnected)
+		}
+
+		additionalHelp := mx.bridge.Config.Bridge.ManagementRoomText.AdditionalHelp
+		if len(additionalHelp) > 0 {
+			_, _ = mx.sendNoticeWithMarkdown(evt.RoomID, additionalHelp)
+		}
 	}
 }
 
@@ -212,21 +236,25 @@ func (mx *MatrixHandler) createPrivatePortalFromInvite(roomID id.RoomID, inviter
 	inviter.addPuppetToCommunity(puppet)
 }
 
-func (mx *MatrixHandler) SyncPuppet(user *User, puppet *Puppet) {
-	if puppet == nil {   # probably recently deleted ! 
-		return
-	}
-	
-	mx.log.Debugln("*** SyncPuppet: Puppet JID: ", puppet.JID, " - User MXID: ", user)
-	contact, ok := user.Conn.Store.Contacts[puppet.JID]
-	if !ok {
-		mx.log.Debugln("*** SyncPuppet : *NEW CONTACT* => creating a plain vanilla whatsapp.Contact with JID = ", puppet.JID)
-		contact = whatsapp.Contact{JID: puppet.JID}
-	}
-	// (WL) Sync possible new contact and also Subscribe to whatsapp events !
-	puppet.Sync(user, contact)
-	user.Conn.SubscribePresence(puppet.JID)
-}
+//func (mx *MatrixHandler) SyncPuppet(user *User, puppet *Puppet) {
+//	if puppet == nil {   // # probably recently deleted ! 
+//		return
+//	}
+//	
+//	mx.log.Debugln("*** SyncPuppet: Puppet JID: ", puppet.JID, " - User MXID: ", user)
+//	contact, ok := user.Conn.Store.Contacts[puppet.JID]
+//	if !ok {
+//		mx.log.Debugln("*** SyncPuppet : *NEW CONTACT* => creating a plain vanilla whatsapp.Contact with JID = ", puppet.JID)
+//		// contact = whatsapp.Contact{JID: puppet.JID}
+//		contact = types.ContactInfo
+//		contact.FirstName = puppet.JID
+//		contact.FullName = puppet.JID
+//
+//	}
+//	// (WL) Sync possible new contact and also Subscribe to whatsapp events !
+//	puppet.Sync(user, contact)
+//	user.Conn.SubscribePresence(puppet.JID)
+//}
 
 func (mx *MatrixHandler) HandlePuppetInvite(evt *event.Event, inviter *User, puppet *Puppet) {
 	intent := puppet.DefaultIntent()
@@ -261,7 +289,7 @@ func (mx *MatrixHandler) HandleMembership(evt *event.Event) {
 	if _, isPuppet := mx.bridge.ParsePuppetMXID(evt.Sender); evt.Sender == mx.bridge.Bot.UserID || isPuppet {
 		return
 	}
-	defer mx.bridge.Metrics.TrackEvent(evt.Type)()
+	defer mx.bridge.Metrics.TrackMatrixEvent(evt.Type)()
 
 	if mx.bridge.Crypto != nil {
 		mx.bridge.Crypto.HandleMemberEvent(evt)
@@ -286,7 +314,7 @@ func (mx *MatrixHandler) HandleMembership(evt *event.Event) {
 	if portal == nil {
 		puppet := mx.bridge.GetPuppetByMXID(id.UserID(evt.GetStateKey()))
 
-		mx.SyncPuppet(user, puppet)
+		// mx.SyncPuppet(user, puppet)
 
 		if content.Membership == event.MembershipInvite && puppet != nil {
 			mx.HandlePuppetInvite(evt, user, puppet)
@@ -316,7 +344,7 @@ func (mx *MatrixHandler) HandleMembership(evt *event.Event) {
 }
 
 func (mx *MatrixHandler) HandleRoomMetadata(evt *event.Event) {
-	defer mx.bridge.Metrics.TrackEvent(evt.Type)()
+	defer mx.bridge.Metrics.TrackMatrixEvent(evt.Type)()
 	if mx.shouldIgnoreEvent(evt) {
 		return
 	}
@@ -352,7 +380,7 @@ func (mx *MatrixHandler) shouldIgnoreEvent(evt *event.Event) bool {
 const sessionWaitTimeout = 5 * time.Second
 
 func (mx *MatrixHandler) HandleEncrypted(evt *event.Event) {
-	defer mx.bridge.Metrics.TrackEvent(evt.Type)()
+	defer mx.bridge.Metrics.TrackMatrixEvent(evt.Type)()
 	if mx.shouldIgnoreEvent(evt) || mx.bridge.Crypto == nil {
 		return
 	}
@@ -422,7 +450,7 @@ func (mx *MatrixHandler) waitLongerForSession(evt *event.Event) {
 }
 
 func (mx *MatrixHandler) HandleMessage(evt *event.Event) {
-	defer mx.bridge.Metrics.TrackEvent(evt.Type)()
+	defer mx.bridge.Metrics.TrackMatrixEvent(evt.Type)()
 	if mx.shouldIgnoreEvent(evt) {
 		return
 	}
@@ -448,7 +476,7 @@ func (mx *MatrixHandler) HandleMessage(evt *event.Event) {
 }
 
 func (mx *MatrixHandler) HandleRedaction(evt *event.Event) {
-	defer mx.bridge.Metrics.TrackEvent(evt.Type)()
+	defer mx.bridge.Metrics.TrackMatrixEvent(evt.Type)()
 	if _, isPuppet := mx.bridge.ParsePuppetMXID(evt.Sender); evt.Sender == mx.bridge.Bot.UserID || isPuppet {
 		return
 	}
