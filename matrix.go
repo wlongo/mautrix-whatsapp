@@ -317,6 +317,7 @@ func (mx *MatrixHandler) HandleMembership(evt *event.Event) {
 		// mx.SyncPuppet(user, puppet)
 
 		if content.Membership == event.MembershipInvite && puppet != nil {
+			user.Conn.SubscribePresence(puppet.JID)				// (WL) : attempt to replace the old code that would subscribe anyone ! 
 			mx.HandlePuppetInvite(evt, user, puppet)
 		}
 		return
