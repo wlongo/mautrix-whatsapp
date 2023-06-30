@@ -2033,18 +2033,25 @@ func (portal *Portal) HandleMessageRevoke(user *User, info *types.MessageInfo, k
 	if msg == nil || msg.IsFakeMXID() {
 		return false
 	}
-	intent := portal.bridge.GetPuppetByJID(info.Sender).IntentFor(portal)
-	_, err := intent.RedactEvent(portal.MXID, msg.MXID)
-	if err != nil {
-		if errors.Is(err, mautrix.MForbidden) {
-			_, err = portal.MainIntent().RedactEvent(portal.MXID, msg.MXID)
-			if err != nil {
-				portal.log.Errorln("Failed to redact %s: %v", msg.JID, err)
-			}
-		}
-	} else {
-		msg.Delete()
+	intent := portal.bridge.GetPuppetByJID(info.Sender).IntentFor(portal)	
+	// (WL) 2023-06-30 : Message Revoking is now disabled !  --------------------------------------
+	if 1 == 1 {
+        _, _ = intent.SendText( portal.MXID, "<<< MESSAGE ABOVE WAS REVOKED >>>" )			
 	}
+	else {
+		_, err := intent.RedactEvent(portal.MXID, msg.MXID)
+		if err != nil {
+			if errors.Is(err, mautrix.MForbidden) {
+				_, err = portal.MainIntent().RedactEvent(portal.MXID, msg.MXID)
+				if err != nil {
+					portal.log.Errorln("Failed to redact %s: %v", msg.JID, err)
+				}
+			}
+		} else {
+			msg.Delete()
+		}
+	} 
+	// (WL) 2023-06-30 : Message Revoking is now disabled !  --------------------------------------
 	return true
 }
 
