@@ -6,7 +6,10 @@
 
 *.session
 *.json
-*.db
+*.db*
 *.log
 
 /mautrix-whatsapp
+logs/
+lkg/
+
