@@ -2607,20 +2607,18 @@ func (portal *Portal) HandleMessageRevoke(ctx context.Context, user *User, info 
 	intent := portal.bridge.GetPuppetByJID(info.Sender).IntentFor(portal)	
 	// (WL) 2023-06-30 : Message Revoking is now disabled !  --------------------------------------
         // (WL) 2024-05-21 : Code adapted for the recent changes...
-	if 1 == 1 {
+        //	if 1 == 1 {
+	if msg.Sender.User != user.JID.User {
            _, _ = intent.SendText( ctx, portal.MXID, "<<< MESSAGE ABOVE WAS REVOKED >>>" )			
 	} else {
-		_, err := intent.RedactEvent(ctx, portal.MXID, msg.MXID)
-		if err != nil {
-			if errors.Is(err, mautrix.MForbidden) {
-				_, err = portal.MainIntent().RedactEvent(ctx, portal.MXID, msg.MXID)
-				if err != nil {
-					log.Err(err).Str("message_id", msg.JID).Msg("Failed to redact")
-				}
-			}
-		} else {
-			msg.Delete(ctx)
-		}
+	   if errors.Is(err, mautrix.MForbidden) {
+ 	   	_, err = portal.MainIntent().RedactEvent(ctx, portal.MXID, msg.MXID)
+	   }
+	   if err != nil {
+		log.Err(err).Stringer("revoke_target_mxid", msg.MXID).Msg("Failed to redact message from revoke")
+	   } else if err = msg.Delete(ctx); err != nil {
+		log.Err(err).Msg("Failed to delete message from database after revoke")
+	   }
 	} 
 	// (WL) 2023-06-30 : Message Revoking is now disabled !  --------------------------------------
 	return true
