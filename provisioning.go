@@ -17,27 +17,25 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
-	"strconv"
+	_ "net/http/pprof"
 	"strings"
 	"time"
 
+	"github.com/beeper/libserv/pkg/requestlog"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/hlog"
 
 	"go.mau.fi/whatsmeow/appstate"
-	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 
 	"go.mau.fi/whatsmeow"
-
-	log "maunium.net/go/maulogger/v2"
 
 	"maunium.net/go/mautrix/bridge/status"
 	"maunium.net/go/mautrix/id"
@@ -45,14 +43,14 @@ import (
 
 type ProvisioningAPI struct {
 	bridge *WABridge
-	log    log.Logger
+	log    zerolog.Logger
 }
 
 func (prov *ProvisioningAPI) Init() {
-	prov.log = prov.bridge.Log.Sub("Provisioning")
-
-	prov.log.Debugln("Enabling provisioning API at", prov.bridge.Config.Bridge.Provisioning.Prefix)
+	prov.log.Debug().Str("base_path", prov.bridge.Config.Bridge.Provisioning.Prefix).Msg("Enabling provisioning API")
 	r := prov.bridge.AS.Router.PathPrefix(prov.bridge.Config.Bridge.Provisioning.Prefix).Subrouter()
+	r.Use(hlog.NewHandler(prov.log))
+	r.Use(requestlog.AccessLogger(true))
 	r.Use(prov.AuthMiddleware)
 	r.HandleFunc("/v1/ping", prov.Ping).Methods(http.MethodGet)
 	r.HandleFunc("/v1/login", prov.Login).Methods(http.MethodGet)
@@ -61,7 +59,6 @@ func (prov *ProvisioningAPI) Init() {
 	r.HandleFunc("/v1/disconnect", prov.Disconnect).Methods(http.MethodPost)
 	r.HandleFunc("/v1/reconnect", prov.Reconnect).Methods(http.MethodPost)
 	r.HandleFunc("/v1/debug/appstate/{name}", prov.SyncAppState).Methods(http.MethodPost)
-	r.HandleFunc("/v1/debug/retry", prov.SendRetryReceipt).Methods(http.MethodPost)
 	r.HandleFunc("/v1/contacts", prov.ListContacts).Methods(http.MethodGet)
 	r.HandleFunc("/v1/groups", prov.ListGroups).Methods(http.MethodGet, http.MethodPost)
 	r.HandleFunc("/v1/resolve_identifier/{number}", prov.ResolveIdentifier).Methods(http.MethodGet)
@@ -74,28 +71,15 @@ func (prov *ProvisioningAPI) Init() {
 	prov.bridge.AS.Router.HandleFunc("/_matrix/app/com.beeper.asmux/ping", prov.BridgeStatePing).Methods(http.MethodPost)
 	prov.bridge.AS.Router.HandleFunc("/_matrix/app/com.beeper.bridge_state", prov.BridgeStatePing).Methods(http.MethodPost)
 
+	if prov.bridge.Config.Bridge.Provisioning.DebugEndpoints {
+		prov.log.Debug().Msg("Enabling debug API at /debug")
+		r := prov.bridge.AS.Router.PathPrefix("/debug").Subrouter()
+		r.Use(prov.AuthMiddleware)
+		r.PathPrefix("/pprof").Handler(http.DefaultServeMux)
+	}
+
 	// Deprecated, just use /disconnect
 	r.HandleFunc("/v1/delete_connection", prov.Disconnect).Methods(http.MethodPost)
-}
-
-type responseWrap struct {
-	http.ResponseWriter
-	statusCode int
-}
-
-var _ http.Hijacker = (*responseWrap)(nil)
-
-func (rw *responseWrap) WriteHeader(statusCode int) {
-	rw.ResponseWriter.WriteHeader(statusCode)
-	rw.statusCode = statusCode
-}
-
-func (rw *responseWrap) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hijacker, ok := rw.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, errors.New("response does not implement http.Hijacker")
-	}
-	return hijacker.Hijack()
 }
 
 func (prov *ProvisioningAPI) AuthMiddleware(h http.Handler) http.Handler {
@@ -114,7 +98,7 @@ func (prov *ProvisioningAPI) AuthMiddleware(h http.Handler) http.Handler {
 			auth = auth[len("Bearer "):]
 		}
 		if auth != prov.bridge.Config.Bridge.Provisioning.SharedSecret {
-			prov.log.Infof("Authentication token does not match shared secret")
+			hlog.FromRequest(r).Debug().Msg("Authentication token does not match shared secret")
 			jsonResponse(w, http.StatusForbidden, map[string]interface{}{
 				"error":   "Authentication token does not match shared secret",
 				"errcode": "M_FORBIDDEN",
@@ -123,11 +107,12 @@ func (prov *ProvisioningAPI) AuthMiddleware(h http.Handler) http.Handler {
 		}
 		userID := r.URL.Query().Get("user_id")
 		user := prov.bridge.GetUserByMXID(id.UserID(userID))
-		start := time.Now()
-		wWrap := &responseWrap{w, 200}
-		h.ServeHTTP(wWrap, r.WithContext(context.WithValue(r.Context(), "user", user)))
-		duration := time.Now().Sub(start).Seconds()
-		prov.log.Infofln("%s %s from %s took %.2f seconds and returned status %d", r.Method, r.URL.Path, user.MXID, duration, wWrap.statusCode)
+		if user != nil {
+			hlog.FromRequest(r).UpdateContext(func(c zerolog.Context) zerolog.Context {
+				return c.Stringer("user_id", user.MXID)
+			})
+		}
+		h.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "user", user)))
 	})
 }
 
@@ -152,7 +137,7 @@ func (prov *ProvisioningAPI) DeleteSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	user.DeleteConnection()
-	user.DeleteSession()
+	user.DeleteSession(r.Context())
 	jsonResponse(w, http.StatusOK, Response{true, "Session information purged"})
 	user.removeFromJIDMap(status.BridgeState{StateEvent: status.StateLoggedOut})
 }
@@ -188,55 +173,6 @@ func (prov *ProvisioningAPI) Reconnect(w http.ResponseWriter, r *http.Request) {
 		user.BridgeState.Send(status.BridgeState{StateEvent: status.StateTransientDisconnect, Error: WANotConnected})
 		user.Connect()
 		jsonResponse(w, http.StatusAccepted, Response{true, "Restarted connection to WhatsApp"})
-	}
-}
-
-type debugRetryReceiptContent struct {
-	ID          types.MessageID `json:"id"`
-	From        types.JID       `json:"from"`
-	Recipient   types.JID       `json:"recipient"`
-	Participant types.JID       `json:"participant"`
-	Timestamp   int64           `json:"timestamp"`
-	Count       int             `json:"count"`
-
-	ForceIncludeIdentity bool `json:"force_include_identity"`
-}
-
-func (prov *ProvisioningAPI) SendRetryReceipt(w http.ResponseWriter, r *http.Request) {
-	var req debugRetryReceiptContent
-	user := r.Context().Value("user").(*User)
-	if user == nil || user.Client == nil {
-		jsonResponse(w, http.StatusNotFound, Error{
-			Error:   "User is not connected to WhatsApp",
-			ErrCode: "no session",
-		})
-		return
-	} else if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonResponse(w, http.StatusBadRequest, Error{
-			Error:   "Failed to parse request JSON",
-			ErrCode: "bad json",
-		})
-	} else {
-		node := &waBinary.Node{
-			Attrs: waBinary.Attrs{
-				"id":   string(req.ID),
-				"from": req.From,
-				"t":    strconv.FormatInt(req.Timestamp, 10),
-			},
-		}
-		if !req.Recipient.IsEmpty() {
-			node.Attrs["recipient"] = req.Recipient
-		}
-		if !req.Participant.IsEmpty() {
-			node.Attrs["participant"] = req.Participant
-		}
-		if req.Count > 0 {
-			node.Content = []waBinary.Node{{
-				Tag:   "enc",
-				Attrs: waBinary.Attrs{"count": strconv.Itoa(req.Count)},
-			}}
-		}
-		user.Client.DangerousInternals().SendRetryReceipt(node, req.ForceIncludeIdentity)
 	}
 }
 
@@ -289,7 +225,7 @@ func (prov *ProvisioningAPI) ListContacts(w http.ResponseWriter, r *http.Request
 			ErrCode: "no session",
 		})
 	} else if contacts, err := user.Session.Contacts.GetAllContacts(); err != nil {
-		prov.log.Errorfln("Failed to fetch %s's contacts: %v", user.MXID, err)
+		hlog.FromRequest(r).Err(err).Msg("Failed to fetch all contacts")
 		jsonResponse(w, http.StatusInternalServerError, Error{
 			Error:   "Internal server error while fetching contact list",
 			ErrCode: "failed to get contacts",
@@ -326,7 +262,7 @@ func (prov *ProvisioningAPI) ListGroups(w http.ResponseWriter, r *http.Request) 
 	if r.Method == http.MethodPost {
 		err := user.ResyncGroups(r.URL.Query().Get("create_portals") == "true")
 		if err != nil {
-			prov.log.Errorfln("Failed to resync %s's groups: %v", user.MXID, err)
+			hlog.FromRequest(r).Err(err).Msg("Failed to resync groups")
 			jsonResponse(w, http.StatusInternalServerError, Error{
 				Error:   "Internal server error while resyncing groups",
 				ErrCode: "failed to sync groups",
@@ -335,7 +271,7 @@ func (prov *ProvisioningAPI) ListGroups(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if groups, err := user.getCachedGroupList(); err != nil {
-		prov.log.Errorfln("Failed to fetch %s's groups: %v", user.MXID, err)
+		hlog.FromRequest(r).Err(err).Msg("Failed to fetch group list")
 		jsonResponse(w, http.StatusInternalServerError, Error{
 			Error:   "Internal server error while fetching group list",
 			ErrCode: "failed to get groups",
@@ -412,17 +348,17 @@ func (prov *ProvisioningAPI) StartPM(w http.ResponseWriter, r *http.Request) {
 		// resolveIdentifier already responded with an error
 		return
 	}
-	portal, puppet, justCreated, err := user.StartPM(jid, "provisioning API PM")
+	portal, puppet, justCreated, err := user.StartPM(r.Context(), jid, "provisioning API PM")
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, Error{
 			Error: fmt.Sprintf("Failed to create portal: %v", err),
 		})
 	}
-	status := http.StatusOK
+	statusCode := http.StatusOK
 	if justCreated {
-		status = http.StatusCreated
+		statusCode = http.StatusCreated
 	}
-	jsonResponse(w, status, PortalInfo{
+	jsonResponse(w, statusCode, PortalInfo{
 		RoomID: portal.MXID,
 		OtherUser: &OtherUserInfo{
 			JID:    puppet.JID,
@@ -493,29 +429,30 @@ func (prov *ProvisioningAPI) OpenGroup(w http.ResponseWriter, r *http.Request) {
 			ErrCode: "invalid group id",
 		})
 	} else if info, err := user.Client.GetGroupInfo(jid); err != nil {
+		hlog.FromRequest(r).Err(err).Msg("Failed to get group info by JID")
 		// TODO return better responses for different errors (like ErrGroupNotFound and ErrNotInGroup)
 		jsonResponse(w, http.StatusInternalServerError, Error{
 			Error:   fmt.Sprintf("Failed to get group info: %v", err),
 			ErrCode: "error getting group info",
 		})
 	} else {
-		prov.log.Debugln("Importing", jid, "for", user.MXID)
+		hlog.FromRequest(r).Debug().Stringer("chat_jid", jid).Msg("Importing group chat for user")
 		portal := user.GetPortalByJID(info.JID)
-		status := http.StatusOK
+		statusCode := http.StatusOK
 		if len(portal.MXID) == 0 {
-			err = portal.CreateMatrixRoom(user, info, true, true)
+			err = portal.CreateMatrixRoom(r.Context(), user, info, nil, true, true)
 			if err != nil {
 				jsonResponse(w, http.StatusInternalServerError, Error{
 					Error: fmt.Sprintf("Failed to create portal: %v", err),
 				})
 				return
 			}
-			status = http.StatusCreated
+			statusCode = http.StatusCreated
 		}
-		jsonResponse(w, status, PortalInfo{
+		jsonResponse(w, statusCode, PortalInfo{
 			RoomID:      portal.MXID,
 			GroupInfo:   info,
-			JustCreated: status == http.StatusCreated,
+			JustCreated: statusCode == http.StatusCreated,
 		})
 	}
 }
@@ -539,6 +476,7 @@ func (prov *ProvisioningAPI) resolveGroupInvite(w http.ResponseWriter, r *http.R
 				ErrCode: "invalid invite link",
 			})
 		} else {
+			hlog.FromRequest(r).Err(err).Msg("Failed to get group info from link")
 			jsonResponse(w, http.StatusInternalServerError, Error{
 				Error:   fmt.Sprintf("Failed to fetch group info with link: %v", err),
 				ErrCode: "error getting group info",
@@ -574,29 +512,30 @@ func (prov *ProvisioningAPI) JoinGroup(w http.ResponseWriter, r *http.Request) {
 	}()
 	inviteCode, _ := mux.Vars(r)["inviteCode"]
 	if jid, err := user.Client.JoinGroupWithLink(inviteCode); err != nil {
+		hlog.FromRequest(r).Err(err).Msg("Failed to join group")
 		jsonResponse(w, http.StatusInternalServerError, Error{
 			Error:   fmt.Sprintf("Failed to join group: %v", err),
 			ErrCode: "error joining group",
 		})
 	} else {
-		prov.log.Debugln(user.MXID, "successfully joined group", jid)
+		hlog.FromRequest(r).Debug().Stringer("chat_jid", jid).Msg("Successfully joined group")
 		portal := user.GetPortalByJID(jid)
-		status := http.StatusOK
+		statusCode := http.StatusOK
 		if len(portal.MXID) == 0 {
 			time.Sleep(500 * time.Millisecond) // Wait for incoming group info to create the portal automatically
-			err = portal.CreateMatrixRoom(user, info, true, true)
+			err = portal.CreateMatrixRoom(r.Context(), user, info, nil, true, true)
 			if err != nil {
 				jsonResponse(w, http.StatusInternalServerError, Error{
 					Error: fmt.Sprintf("Failed to create portal: %v", err),
 				})
 				return
 			}
-			status = http.StatusCreated
+			statusCode = http.StatusCreated
 		}
-		jsonResponse(w, status, PortalInfo{
+		jsonResponse(w, statusCode, PortalInfo{
 			RoomID:      portal.MXID,
 			GroupInfo:   info,
-			JustCreated: status == http.StatusCreated,
+			JustCreated: statusCode == http.StatusCreated,
 		})
 	}
 }
@@ -660,7 +599,7 @@ func (prov *ProvisioningAPI) Logout(w http.ResponseWriter, r *http.Request) {
 	} else {
 		err := user.Client.Logout()
 		if err != nil {
-			user.log.Warnln("Error while logging out:", err)
+			hlog.FromRequest(r).Err(err).Msg("Unknown error while logging out")
 			if !force {
 				jsonResponse(w, http.StatusInternalServerError, Error{
 					Error:   fmt.Sprintf("Unknown error while logging out: %v", err),
@@ -676,7 +615,7 @@ func (prov *ProvisioningAPI) Logout(w http.ResponseWriter, r *http.Request) {
 
 	user.bridge.Metrics.TrackConnectionState(user.JID, false)
 	user.removeFromJIDMap(status.BridgeState{StateEvent: status.StateLoggedOut})
-	user.DeleteSession()
+	user.DeleteSession(r.Context())
 	jsonResponse(w, http.StatusOK, Response{true, "Logged out successfully."})
 }
 
@@ -690,16 +629,17 @@ var upgrader = websocket.Upgrader{
 func (prov *ProvisioningAPI) Login(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("user_id")
 	user := prov.bridge.GetUserByMXID(id.UserID(userID))
+	log := hlog.FromRequest(r)
 
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		prov.log.Errorln("Failed to upgrade connection to websocket:", err)
+		log.Err(err).Msg("Failed to upgrade connection to websocket")
 		return
 	}
 	defer func() {
 		err := c.Close()
 		if err != nil {
-			user.log.Debugln("Error closing websocket:", err)
+			log.Debug().Err(err).Msg("Error closing websocket")
 		}
 	}()
 
@@ -714,22 +654,26 @@ func (prov *ProvisioningAPI) Login(w http.ResponseWriter, r *http.Request) {
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	c.SetCloseHandler(func(code int, text string) error {
-		user.log.Debugfln("Login websocket closed (%d), cancelling login", code)
+		log.Debug().Int("close_code", code).Msg("Login websocket closed, cancelling login")
 		cancel()
 		return nil
 	})
 
 	if userTimezone := r.URL.Query().Get("tz"); userTimezone != "" {
-		user.log.Debug("Setting timezone to %s", userTimezone)
+		log.Debug().Str("timezone", userTimezone).Msg("Updating user timezone")
 		user.Timezone = userTimezone
-		user.Update()
+		err = user.Update(r.Context())
+		if err != nil {
+			log.Err(err).Msg("Failed to save user after updating timezone")
+		}
 	} else {
-		user.log.Debug("No timezone provided in request")
+		log.Debug().Msg("No timezone provided in request")
 	}
 
 	qrChan, err := user.Login(ctx)
+	expiryTime := time.Now().Add(160 * time.Second)
 	if err != nil {
-		user.log.Errorln("Failed to log in from provisioning API:", err)
+		log.Err(err).Msg("Failed to log in via provisioning API")
 		if errors.Is(err, ErrAlreadyLoggedIn) {
 			go user.Connect()
 			_ = c.WriteJSON(Error{
@@ -743,8 +687,28 @@ func (prov *ProvisioningAPI) Login(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	user.log.Debugln("Started login via provisioning API")
-	Segment.Track(user.MXID, "$login_start")
+	phoneNum := r.URL.Query().Get("phone_number")
+	if phoneNum != "" {
+		pairingCode, err := user.Client.PairPhone(phoneNum, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+		if err != nil {
+			log.Err(err).Msg("Failed to start phone code login")
+			_ = c.WriteJSON(Error{
+				Error:   "Failed to request pairing code",
+				ErrCode: "code error",
+			})
+			go user.DeleteConnection()
+			return
+		} else {
+			log.Debug().Msg("Started phone number login")
+			_ = c.WriteJSON(map[string]any{
+				"pairing_code": pairingCode,
+				"timeout":      int(time.Until(expiryTime).Seconds()),
+			})
+		}
+	}
+
+	log.Debug().Msg("Started login via provisioning API")
+	Analytics.Track(user.MXID, "$login_start")
 
 	for {
 		select {
@@ -752,8 +716,8 @@ func (prov *ProvisioningAPI) Login(w http.ResponseWriter, r *http.Request) {
 			switch evt.Event {
 			case whatsmeow.QRChannelSuccess.Event:
 				jid := user.Client.Store.ID
-				user.log.Debugln("Successful login as", jid, "via provisioning API")
-				Segment.Track(user.MXID, "$login_success")
+				log.Debug().Stringer("jid", jid).Msg("Successful login via provisioning API")
+				Analytics.Track(user.MXID, "$login_success")
 				_ = c.WriteJSON(map[string]interface{}{
 					"success":  true,
 					"jid":      jid,
@@ -761,32 +725,32 @@ func (prov *ProvisioningAPI) Login(w http.ResponseWriter, r *http.Request) {
 					"platform": user.Client.Store.Platform,
 				})
 			case whatsmeow.QRChannelTimeout.Event:
-				user.log.Debugln("Login via provisioning API timed out")
+				log.Debug().Msg("Login via provisioning API timed out")
 				errCode := "login timed out"
-				Segment.Track(user.MXID, "$login_failure", map[string]interface{}{"error": errCode})
+				Analytics.Track(user.MXID, "$login_failure", map[string]interface{}{"error": errCode})
 				_ = c.WriteJSON(Error{
 					Error:   "QR code scan timed out. Please try again.",
 					ErrCode: errCode,
 				})
 			case whatsmeow.QRChannelErrUnexpectedEvent.Event:
-				user.log.Debugln("Login via provisioning API failed due to unexpected event")
+				log.Debug().Msg("Login via provisioning API failed due to unexpected event")
 				errCode := "unexpected event"
-				Segment.Track(user.MXID, "$login_failure", map[string]interface{}{"error": errCode})
+				Analytics.Track(user.MXID, "$login_failure", map[string]interface{}{"error": errCode})
 				_ = c.WriteJSON(Error{
 					Error:   "Got unexpected event while waiting for QRs, perhaps you're already logged in?",
 					ErrCode: errCode,
 				})
 			case whatsmeow.QRChannelClientOutdated.Event:
-				user.log.Debugln("Login via provisioning API failed due to outdated client")
+				log.Debug().Msg("Login via provisioning API failed due to outdated client")
 				errCode := "bridge outdated"
-				Segment.Track(user.MXID, "$login_failure", map[string]interface{}{"error": errCode})
+				Analytics.Track(user.MXID, "$login_failure", map[string]interface{}{"error": errCode})
 				_ = c.WriteJSON(Error{
 					Error:   "Got client outdated error while waiting for QRs. The bridge must be updated to continue.",
 					ErrCode: errCode,
 				})
 			case whatsmeow.QRChannelScannedWithoutMultidevice.Event:
 				errCode := "multidevice not enabled"
-				Segment.Track(user.MXID, "$login_failure", map[string]interface{}{"error": errCode})
+				Analytics.Track(user.MXID, "$login_failure", map[string]interface{}{"error": errCode})
 				_ = c.WriteJSON(Error{
 					Error:   "Please enable the WhatsApp multidevice beta and scan the QR code again.",
 					ErrCode: errCode,
@@ -794,13 +758,13 @@ func (prov *ProvisioningAPI) Login(w http.ResponseWriter, r *http.Request) {
 				continue
 			case "error":
 				errCode := "fatal error"
-				Segment.Track(user.MXID, "$login_failure", map[string]interface{}{"error": errCode})
+				Analytics.Track(user.MXID, "$login_failure", map[string]interface{}{"error": errCode})
 				_ = c.WriteJSON(Error{
 					Error:   "Fatal error while logging in",
 					ErrCode: errCode,
 				})
 			case "code":
-				Segment.Track(user.MXID, "$qrcode_retrieved")
+				Analytics.Track(user.MXID, "$qrcode_retrieved")
 				_ = c.WriteJSON(map[string]interface{}{
 					"code":    evt.Code,
 					"timeout": int(evt.Timeout.Seconds()),

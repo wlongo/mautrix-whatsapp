@@ -19,22 +19,26 @@ package config
 import (
 	"strings"
 
+	up "go.mau.fi/util/configupgrade"
+	"go.mau.fi/util/random"
 	"maunium.net/go/mautrix/bridge/bridgeconfig"
-	"maunium.net/go/mautrix/util"
-	up "maunium.net/go/mautrix/util/configupgrade"
 )
 
 func DoUpgrade(helper *up.Helper) {
 	bridgeconfig.Upgrader.DoUpgrade(helper)
 
-	helper.Copy(up.Str|up.Null, "segment_key")
-	helper.Copy(up.Str|up.Null, "segment_user_id")
+	helper.Copy(up.Str|up.Null, "analytics", "host")
+	helper.Copy(up.Str|up.Null, "analytics", "token")
+	helper.Copy(up.Str|up.Null, "analytics", "user_id")
 
 	helper.Copy(up.Bool, "metrics", "enabled")
 	helper.Copy(up.Str, "metrics", "listen")
 
 	helper.Copy(up.Str, "whatsapp", "os_name")
 	helper.Copy(up.Str, "whatsapp", "browser_name")
+	helper.Copy(up.Str|up.Null, "whatsapp", "proxy")
+	helper.Copy(up.Str|up.Null, "whatsapp", "get_proxy_url")
+	helper.Copy(up.Bool, "whatsapp", "proxy_only_login")
 
 	helper.Copy(up.Str, "bridge", "username_template")
 	helper.Copy(up.Str, "bridge", "displayname_template")
@@ -53,6 +57,7 @@ func DoUpgrade(helper *up.Helper) {
 	helper.Copy(up.Bool, "bridge", "history_sync", "media_requests", "auto_request_media")
 	helper.Copy(up.Str, "bridge", "history_sync", "media_requests", "request_method")
 	helper.Copy(up.Int, "bridge", "history_sync", "media_requests", "request_local_time")
+	helper.Copy(up.Int, "bridge", "history_sync", "media_requests", "max_async_handle")
 	helper.Copy(up.Int, "bridge", "history_sync", "max_initial_conversations")
 	helper.Copy(up.Int, "bridge", "history_sync", "message_count")
 	helper.Copy(up.Int, "bridge", "history_sync", "unread_hours_threshold")
@@ -61,9 +66,7 @@ func DoUpgrade(helper *up.Helper) {
 	helper.Copy(up.List, "bridge", "history_sync", "deferred")
 	helper.Copy(up.Bool, "bridge", "user_avatar_sync")
 	helper.Copy(up.Bool, "bridge", "bridge_matrix_leave")
-	helper.Copy(up.Bool, "bridge", "sync_with_custom_puppets")
 	helper.Copy(up.Bool, "bridge", "sync_direct_chat_list")
-	helper.Copy(up.Bool, "bridge", "default_bridge_receipts")
 	helper.Copy(up.Bool, "bridge", "default_bridge_presence")
 	helper.Copy(up.Bool, "bridge", "send_presence_on_typing")
 	helper.Copy(up.Bool, "bridge", "force_active_delivery_receipts")
@@ -104,6 +107,7 @@ func DoUpgrade(helper *up.Helper) {
 	helper.Copy(up.Bool, "bridge", "crash_on_stream_replaced")
 	helper.Copy(up.Bool, "bridge", "url_previews")
 	helper.Copy(up.Bool, "bridge", "caption_in_message")
+	helper.Copy(up.Bool, "bridge", "beeper_galleries")
 	if intPolls, ok := helper.Get(up.Int, "bridge", "extev_polls"); ok {
 		val := "false"
 		if intPolls != "0" {
@@ -160,10 +164,11 @@ func DoUpgrade(helper *up.Helper) {
 	} else {
 		helper.Copy(up.Str, "bridge", "provisioning", "prefix")
 	}
+	helper.Copy(up.Bool, "bridge", "provisioning", "debug_endpoints")
 	if secret, ok := helper.Get(up.Str, "appservice", "provisioning", "shared_secret"); ok && secret != "generate" {
 		helper.Set(up.Str, secret, "bridge", "provisioning", "shared_secret")
 	} else if secret, ok = helper.Get(up.Str, "bridge", "provisioning", "shared_secret"); !ok || secret == "generate" {
-		sharedSecret := util.RandomString(64)
+		sharedSecret := random.String(64)
 		helper.Set(up.Str, sharedSecret, "bridge", "provisioning", "shared_secret")
 	} else {
 		helper.Copy(up.Str, "bridge", "provisioning", "shared_secret")
@@ -181,7 +186,7 @@ var SpacedBlocks = [][]string{
 	{"appservice", "database"},
 	{"appservice", "id"},
 	{"appservice", "as_token"},
-	{"segment_key"},
+	{"analytics"},
 	{"metrics"},
 	{"whatsapp"},
 	{"bridge"},
