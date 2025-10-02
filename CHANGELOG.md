@@ -1,3 +1,61 @@
+# v0.12.5 (2025-09-16)
+
+* Removed legacy provisioning API and database legacy migration.
+  Upgrading directly from versions prior to v0.11.0 is not supported.
+  * If you've been using the bridge since before v0.11.0 and have prevented the
+    bridge from writing to the config, you must either update the config
+    manually or allow the bridge to update it for you **before** upgrading to
+    this release (i.e. run v0.12.4 once with config writing allowed).
+* Added support for changing group name/topic/avatar from Matrix
+  (thanks to [@Petersmit27] in [#834]).
+* Added `RedactedPhone` placeholder for displayname templates. This allows
+  community announcement groups (where you can't see participants phone numbers)
+  to have better names than random numbers.
+* Added support for `com.beeper.disappearing_timer` state event, which stores
+  the disappearing setting of chats and allows changing the setting from Matrix.
+* Added lottieconverter to Docker images to enable converting animated stickers
+  from WhatsApp.
+* Added support for creating WhatsApp groups.
+* Fixed sent PNGs not being rendered on WhatsApp iOS.
+
+[@Petersmit27]: https://github.com/Petersmit27
+[#834]: https://github.com/mautrix/whatsapp/pull/834
+
+# v0.12.4 (2025-08-16)
+
+* Deprecated legacy provisioning API. The `/_matrix/provision/v1` endpoints will
+  be deleted in the next release.
+* Bumped minimum Go version to 1.24.
+* Added support for bridging HD dual uploads from WhatsApp into edits on Matrix.
+* Added better placeholders for pin and keep messages from WhatsApp.
+* Fixed bridging animated webp stickers to WhatsApp.
+  * Note that non-square stickers may appear corrupted on native clients.
+    The bridge will not automatically add padding to animated stickers like it
+    does for static ones.
+* Fixed avatar changes not reflecting on both the LID and phone number ghost of
+  a given user in certain cases.
+* Fixed first message after group LID migration still using the phone number
+  ghost.
+* Fixed bot messages in DMs being split into another portal room.
+* Fixed new group members not having a phone number name in some cases.
+
+# v0.12.3 (2025-07-16)
+
+* Further improved support for `@lid` users.
+* Added automatic conversion when sending quicktime/mov videos to WhatsApp.
+* Fixed disappearing message timer not automatically fixing itself in some cases.
+* Fixed call notices being sent to DM portal even if the call was in a group.
+
+# v0.12.2 (2025-06-16)
+
+* Improved support for `@lid` users.
+  * **N.B.** As mentioned in the v0.12.0 release, old registration files may
+    have `[0-9]+` in the `users` regex. You must change it to `.+`, as the new
+    `lid` identifiers are bridged as `lid-<number>` instead of just `<phone number>`.
+* Updated Docker image to Alpine 3.22.
+* Fixed network errors on first connect not triggering automatic reconnect.
+* Fixed animated sticker zips not being extracted when using direct media.
+
 # v0.12.1 (2025-05-16)
 
 * Added prefix to identify forwarded messages on WhatsApp.
@@ -13,6 +71,9 @@
 
 * Migrated Signal session store to use new `@lid` identifiers to support future
   chats that don't expose phone numbers.
+  * **N.B.** Old registration files may have `[0-9]+` in the `users` regex. You
+    must change it to `.+`, as the new `lid` identifiers are bridged as
+    `lid-<number>` instead of just `<phone number>`.
 * Added fallbacks for various business message types.
 * Added support for bridging invites, kicks and leaves in groups.
 * Re-added `invite-link`, `join` and `sync` commands for groups.
