@@ -139,7 +139,7 @@ func (evt *WAMessageEvent) PreHandle(ctx context.Context, portal *bridgev2.Porta
 	log := zerolog.Ctx(ctx).With().Str("action", "group lid migration").Logger()
 	ctx = log.WithContext(ctx)
 	meta.LIDMigrationAttempted = true
-	info, err := evt.wa.Client.GetGroupInfo(portalJID)
+	info, err := evt.wa.Client.GetGroupInfo(ctx, portalJID)
 	if err != nil {
 		log.Err(err).Msg("Failed to get group info for lid migration")
 		return
@@ -340,9 +340,13 @@ func (evt *WAUndecryptableMessage) ConvertMessage(ctx context.Context, portal *b
 	}
 	content := &undecryptableMessageContent
 	if evt.Type == events.UnavailableTypeViewOnce {
+		body := "You received a view once message. For added privacy, you can only open it on the WhatsApp app."
+		if evt.Info.IsFromMe {
+			body = "You sent a view once message from another device."
+		}
 		content = &event.MessageEventContent{
 			MsgType: event.MsgNotice,
-			Body:    "You received a view once message. For added privacy, you can only open it on the WhatsApp app.",
+			Body:    body,
 		}
 	}
 	// TODO thread root for comments

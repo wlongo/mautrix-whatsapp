@@ -54,11 +54,15 @@ func (mc *MessageConverter) convertMediaMessage(
 	cachedPart *bridgev2.ConvertedMessagePart,
 ) (part *bridgev2.ConvertedMessagePart, contextInfo *waE2E.ContextInfo) {
 	if mc.DisableViewOnce && isViewOnce {
+		body := "You received a view once message. For added privacy, you can only open it on the WhatsApp app."
+		if messageInfo.IsFromMe {
+			body = "You sent a view once message from another device."
+		}
 		return &bridgev2.ConvertedMessagePart{
 			Type: event.EventMessage,
 			Content: &event.MessageEventContent{
 				MsgType: event.MsgNotice,
-				Body:    fmt.Sprintf("You received a view once %s. For added privacy, you can only open it on the WhatsApp app.", typeName),
+				Body:    body,
 			},
 		}, nil
 	}
@@ -233,6 +237,8 @@ type MediaMessageWithDuration interface {
 	GetSeconds() uint32
 }
 
+const WhatsAppStickerSize = 190
+
 func prepareMediaMessage(rawMsg MediaMessage) *PreparedMedia {
 	extraInfo := map[string]any{}
 	data := &PreparedMedia{
@@ -244,6 +250,22 @@ func prepareMediaMessage(rawMsg MediaMessage) *PreparedMedia {
 			"info": extraInfo,
 		},
 	}
+	if durationMsg, ok := rawMsg.(MediaMessageWithDuration); ok {
+		data.Info.Duration = int(durationMsg.GetSeconds() * 1000)
+	}
+	if dimensionMsg, ok := rawMsg.(MediaMessageWithDimensions); ok {
+		data.Info.Width = int(dimensionMsg.GetWidth())
+		data.Info.Height = int(dimensionMsg.GetHeight())
+	}
+	if captionMsg, ok := rawMsg.(MediaMessageWithCaption); ok && captionMsg.GetCaption() != "" {
+		data.Body = captionMsg.GetCaption()
+	} else {
+		data.Body = data.FileName
+	}
+	data.Info.Size = int(rawMsg.GetFileLength())
+	data.Info.MimeType = rawMsg.GetMimetype()
+	data.ContextInfo = rawMsg.GetContextInfo()
+
 	switch msg := rawMsg.(type) {
 	case *waE2E.ImageMessage:
 		data.MsgType = event.MsgImage
@@ -268,9 +290,20 @@ func prepareMediaMessage(rawMsg MediaMessage) *PreparedMedia {
 		if msg.GetMimetype() == "application/was" && data.FileName == "sticker" {
 			data.FileName = "sticker.json"
 		}
+		if data.Info.Width == data.Info.Height {
+			data.Info.Width = WhatsAppStickerSize
+			data.Info.Height = WhatsAppStickerSize
+		} else if data.Info.Width > data.Info.Height {
+			data.Info.Height /= data.Info.Width / WhatsAppStickerSize
+			data.Info.Width = WhatsAppStickerSize
+		} else {
+			data.Info.Width /= data.Info.Height / WhatsAppStickerSize
+			data.Info.Height = WhatsAppStickerSize
+		}
 	case *waE2E.VideoMessage:
 		data.MsgType = event.MsgVideo
-		if msg.GetGifPlayback() {
+		pairedMediaType := msg.GetContextInfo().GetPairedMediaType()
+		if msg.GetGifPlayback() || pairedMediaType == waE2E.ContextInfo_MOTION_PHOTO_PARENT || pairedMediaType == waE2E.ContextInfo_MOTION_PHOTO_CHILD {
 			extraInfo["fi.mau.gif"] = true
 			extraInfo["fi.mau.loop"] = true
 			extraInfo["fi.mau.autoplay"] = true
@@ -281,22 +314,7 @@ func prepareMediaMessage(rawMsg MediaMessage) *PreparedMedia {
 	default:
 		panic(fmt.Errorf("unknown media message type %T", rawMsg))
 	}
-	if durationMsg, ok := rawMsg.(MediaMessageWithDuration); ok {
-		data.Info.Duration = int(durationMsg.GetSeconds() * 1000)
-	}
-	if dimensionMsg, ok := rawMsg.(MediaMessageWithDimensions); ok {
-		data.Info.Width = int(dimensionMsg.GetWidth())
-		data.Info.Height = int(dimensionMsg.GetHeight())
-	}
-	if captionMsg, ok := rawMsg.(MediaMessageWithCaption); ok && captionMsg.GetCaption() != "" {
-		data.Body = captionMsg.GetCaption()
-	} else {
-		data.Body = data.FileName
-	}
 
-	data.Info.Size = int(rawMsg.GetFileLength())
-	data.Info.MimeType = rawMsg.GetMimetype()
-	data.ContextInfo = rawMsg.GetContextInfo()
 	return data
 }
 

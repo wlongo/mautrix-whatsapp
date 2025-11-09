@@ -24,6 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/lib/pq"
 	"go.mau.fi/util/dbutil"
 	"go.mau.fi/util/random"
 	"go.mau.fi/whatsmeow"
@@ -56,6 +57,10 @@ type WhatsAppConnector struct {
 	mediaEditCache         MediaEditCache
 	mediaEditCacheLock     sync.RWMutex
 	stopMediaEditCacheLoop atomic.Pointer[context.CancelFunc]
+}
+
+func init() {
+	sqlstore.PostgresArrayWrapper = pq.Array
 }
 
 var (
@@ -115,11 +120,12 @@ func (wa *WhatsAppConnector) Init(bridge *bridgev2.Bridge) {
 	store.DeviceProps.Os = proto.String(wa.Config.OSName)
 	store.DeviceProps.RequireFullSync = proto.Bool(wa.Config.HistorySync.RequestFullSync)
 	if fsc := wa.Config.HistorySync.FullSyncConfig; fsc.DaysLimit > 0 && fsc.SizeLimit > 0 && fsc.StorageQuota > 0 {
-		store.DeviceProps.HistorySyncConfig = &waCompanionReg.DeviceProps_HistorySyncConfig{
-			FullSyncDaysLimit:   proto.Uint32(fsc.DaysLimit),
-			FullSyncSizeMbLimit: proto.Uint32(fsc.SizeLimit),
-			StorageQuotaMb:      proto.Uint32(fsc.StorageQuota),
+		if store.DeviceProps.HistorySyncConfig == nil {
+			store.DeviceProps.HistorySyncConfig = &waCompanionReg.DeviceProps_HistorySyncConfig{}
 		}
+		store.DeviceProps.HistorySyncConfig.FullSyncDaysLimit = proto.Uint32(fsc.DaysLimit)
+		store.DeviceProps.HistorySyncConfig.FullSyncSizeMbLimit = proto.Uint32(fsc.SizeLimit)
+		store.DeviceProps.HistorySyncConfig.StorageQuotaMb = proto.Uint32(fsc.StorageQuota)
 	}
 	platformID, ok := waCompanionReg.DeviceProps_PlatformType_value[strings.ToUpper(wa.Config.BrowserName)]
 	if ok {
@@ -154,6 +160,8 @@ func (wa *WhatsAppConnector) Stop() {
 
 const kvWAVersion = "whatsapp_web_version"
 
+var hardcodedWAVersion = store.GetWAVersion()
+
 func (wa *WhatsAppConnector) onFirstBackgroundConnect() {
 	verStr := wa.Bridge.DB.KV.Get(wa.Bridge.BackgroundCtx, kvWAVersion)
 	if verStr == "" {
@@ -166,7 +174,7 @@ func (wa *WhatsAppConnector) onFirstBackgroundConnect() {
 		return
 	}
 	wa.Bridge.Log.Debug().
-		Stringer("hardcoded_version", store.GetWAVersion()).
+		Stringer("hardcoded_version", hardcodedWAVersion).
 		Stringer("cached_version", ver).
 		Msg("Using cached WhatsApp web version number")
 	store.SetWAVersion(ver)
@@ -179,7 +187,7 @@ func (wa *WhatsAppConnector) onFirstClientConnect() {
 		wa.Bridge.Log.Err(err).Msg("Failed to get latest WhatsApp web version number")
 	} else {
 		wa.Bridge.Log.Debug().
-			Stringer("hardcoded_version", store.GetWAVersion()).
+			Stringer("hardcoded_version", hardcodedWAVersion).
 			Stringer("latest_version", *ver).
 			Msg("Got latest WhatsApp web version number")
 		store.SetWAVersion(*ver)
