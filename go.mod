@@ -15,7 +15,7 @@ require (
 	golang.org/x/sync v0.17.0
 	google.golang.org/protobuf v1.36.10
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.25.3-0.20251109094010-14e16a3a8190
+	maunium.net/go/mautrix v0.25.3-0.20251109094010-14e16a3a8190-WL
 )
 
 require (
@@ -49,3 +49,6 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	maunium.net/go/mauflag v1.0.0 // indirect
 )
+
+// (WL) 2025-11-09 : Mautrix-Go now is using a local managed version 
+replace maunium.net/go/mautrix => ./mod/mautrix-go
