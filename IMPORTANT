@@ -1,0 +1,9 @@
+Monkey Patch Details:
+
+1. The mautrix-go project was embedded in the mod folder and has it's own git structure there 
+2. The only file that was changed so far in the mautrix-whatsapp project was the go.mod file to allow the replacement 
+
+* Important *
+
+- mautrix-go would need to be upstream merged from time to time to avoid disruptures !
+
