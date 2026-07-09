@@ -177,7 +177,7 @@ func (wa *WhatsAppClient) HandleMatrixReaction(ctx context.Context, msg *bridgev
 	defer wa.mcTrack(msg, time.Now(), &retErr)
 	var req whatsmeow.SendRequestExtra
 	if msg.Portal.Metadata.(*waid.PortalMetadata).CommunityAnnouncementGroup {
-		reactionMsg.EncReactionMessage, err = wa.Client.EncryptReaction(ctx, msgconv.MessageIDToInfo(wa.Client, messageID), reactionMsg.ReactionMessage)
+		reactionMsg.EncReactionMessage, err = wa.Client.EncryptReaction(ctx, msgconv.MessageIDToInfo(ctx, wa.Client, messageID), reactionMsg.ReactionMessage)
 		if err != nil {
 			return nil, fmt.Errorf("failed to encrypt reaction: %w", err)
 		}
