@@ -52,8 +52,9 @@ func (wa *WhatsAppClient) getPortalKeyByMessageSource(ms types.MessageSource) ne
 }
 
 type MessageInfoWrapper struct {
-	Info types.MessageInfo
-	wa   *WhatsAppClient
+	OrigSource types.MessageSource
+	Info       types.MessageInfo
+	wa         *WhatsAppClient
 }
 
 func (evt *MessageInfoWrapper) ShouldCreatePortal() bool {
@@ -200,7 +201,7 @@ func (evt *WAMessageEvent) ConvertEdit(ctx context.Context, portal *bridgev2.Por
 
 	ctx = context.WithValue(ctx, msgconv.ContextKeyEditTargetID, evt.Message.GetProtocolMessage().GetKey().GetID())
 	cm := evt.wa.Main.MsgConv.ToMatrix(
-		ctx, portal, evt.wa.Client, intent, editedMsg, evt.MsgEvent.RawMessage, &evt.Info, evt.isViewOnce(), false, previouslyConvertedPart,
+		ctx, portal, evt.wa.Client, intent, editedMsg, evt.MsgEvent.RawMessage, &evt.Info, &evt.OrigSource, evt.isViewOnce(), false, previouslyConvertedPart,
 	)
 	if evt.isUndecryptableUpsertSubEvent && isFailedMedia(cm) {
 		evt.postHandle = func() {
@@ -285,7 +286,7 @@ func (evt *WAMessageEvent) HandleExisting(ctx context.Context, portal *bridgev2.
 func (evt *WAMessageEvent) ConvertMessage(ctx context.Context, portal *bridgev2.Portal, intent bridgev2.MatrixAPI) (*bridgev2.ConvertedMessage, error) {
 	evt.wa.EnqueuePortalResync(portal, false)
 	converted := evt.wa.Main.MsgConv.ToMatrix(
-		ctx, portal, evt.wa.Client, intent, evt.Message, evt.MsgEvent.RawMessage, &evt.Info, evt.isViewOnce(), false, nil,
+		ctx, portal, evt.wa.Client, intent, evt.Message, evt.MsgEvent.RawMessage, &evt.Info, &evt.OrigSource, evt.isViewOnce(), false, nil,
 	)
 	if isFailedMedia(converted) {
 		evt.postHandle = func() {

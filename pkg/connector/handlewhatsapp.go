@@ -358,6 +358,7 @@ func (wa *WhatsAppClient) handleWAMessage(ctx context.Context, evt *events.Messa
 		evt.UnwrapRaw()
 		parsedMessageType = getMessageType(evt.Message)
 	}
+	origSource := evt.Info.MessageSource
 	wa.rerouteWAMessage(ctx, "message", &evt.Info.MessageSource, evt.Info.ID)
 	wa.UserLogin.Log.Trace().
 		Any("info", evt.Info).
@@ -409,8 +410,9 @@ func (wa *WhatsAppClient) handleWAMessage(ctx context.Context, evt *events.Messa
 
 	res := wa.UserLogin.QueueRemoteEvent(&WAMessageEvent{
 		MessageInfoWrapper: &MessageInfoWrapper{
-			Info: evt.Info,
-			wa:   wa,
+			OrigSource: origSource,
+			Info:       evt.Info,
+			wa:         wa,
 		},
 		Message:  evt.Message,
 		MsgEvent: evt,

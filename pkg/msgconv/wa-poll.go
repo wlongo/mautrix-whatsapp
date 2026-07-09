@@ -170,7 +170,7 @@ var failedPollUpdatePart = &bridgev2.ConvertedMessagePart{
 	DontBridge: true,
 }
 
-func (mc *MessageConverter) convertPollUpdateMessage(ctx context.Context, info *types.MessageInfo, msg *waE2E.PollUpdateMessage) (*bridgev2.ConvertedMessagePart, *waE2E.ContextInfo) {
+func (mc *MessageConverter) convertPollUpdateMessage(ctx context.Context, info *types.MessageInfo, origSource *types.MessageSource, msg *waE2E.PollUpdateMessage) (*bridgev2.ConvertedMessagePart, *waE2E.ContextInfo) {
 	log := zerolog.Ctx(ctx)
 	pollMessageID := KeyToMessageID(ctx, getClient(ctx), info.Chat, info.Sender, msg.PollCreationMessageKey)
 	pollMessage, err := mc.Bridge.DB.Message.GetPartByID(ctx, getPortal(ctx).Receiver, pollMessageID, "")
@@ -181,8 +181,12 @@ func (mc *MessageConverter) convertPollUpdateMessage(ctx context.Context, info *
 		log.Warn().Str("target_message_id", string(pollMessageID)).Msg("Poll update target message not found")
 		return failedPollUpdatePart, nil
 	}
+	infoForDecrypt := *info
+	if origSource != nil {
+		infoForDecrypt.MessageSource = *origSource
+	}
 	vote, err := getClient(ctx).DecryptPollVote(ctx, &events.Message{
-		Info:    *info,
+		Info:    infoForDecrypt,
 		Message: &waE2E.Message{PollUpdateMessage: msg},
 	})
 	if err != nil {

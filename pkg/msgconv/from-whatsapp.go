@@ -136,6 +136,7 @@ func (mc *MessageConverter) ToMatrix(
 	waMsg *waE2E.Message,
 	rawWaMsg *waE2E.Message,
 	info *types.MessageInfo,
+	origSource *types.MessageSource,
 	isViewOnce bool,
 	isBackfill bool,
 	previouslyConvertedPart *bridgev2.ConvertedMessagePart,
@@ -176,7 +177,7 @@ func (mc *MessageConverter) ToMatrix(
 	case waMsg.PollCreationMessageV3 != nil:
 		part, contextInfo = mc.convertPollCreationMessage(ctx, waMsg.PollCreationMessageV3)
 	case waMsg.PollUpdateMessage != nil:
-		part, contextInfo = mc.convertPollUpdateMessage(ctx, info, waMsg.PollUpdateMessage)
+		part, contextInfo = mc.convertPollUpdateMessage(ctx, info, origSource, waMsg.PollUpdateMessage)
 	case waMsg.EventMessage != nil:
 		part, contextInfo = mc.convertEventMessage(ctx, waMsg.EventMessage)
 	case waMsg.PinInChatMessage != nil:
