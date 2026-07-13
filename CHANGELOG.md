@@ -1,3 +1,9 @@
+# v26.07 (unreleased)
+
+* Added support for the extra passkey authentication step when logging in.
+* Added support for newer versions of poll messages from WhatsApp.
+* Fixed poll votes in DMs.
+
 # v26.06
 
 * Added placeholder for group message history share notices.
