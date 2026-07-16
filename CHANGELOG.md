@@ -1,5 +1,6 @@
-# v26.07 (unreleased)
+# v26.07
 
+* Updated Docker image to Alpine 3.24.
 * Added support for the extra passkey authentication step when logging in.
 * Added support for newer versions of poll messages from WhatsApp.
 * Fixed poll votes in DMs.
