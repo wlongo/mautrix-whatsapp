@@ -136,10 +136,14 @@ func (mc *MessageConverter) ToMatrix(
 	waMsg *waE2E.Message,
 	rawWaMsg *waE2E.Message,
 	info *types.MessageInfo,
+	origSource *types.MessageSource,
 	isViewOnce bool,
 	isBackfill bool,
 	previouslyConvertedPart *bridgev2.ConvertedMessagePart,
 ) *bridgev2.ConvertedMessage {
+	if waMsg == nil {
+		waMsg = &waE2E.Message{}
+	}
 	ctx = context.WithValue(ctx, contextKeyClient, client)
 	ctx = context.WithValue(ctx, contextKeyIntent, intent)
 	ctx = context.WithValue(ctx, contextKeyPortal, portal)
@@ -172,8 +176,14 @@ func (mc *MessageConverter) ToMatrix(
 		part, contextInfo = mc.convertPollCreationMessage(ctx, waMsg.PollCreationMessageV2)
 	case waMsg.PollCreationMessageV3 != nil:
 		part, contextInfo = mc.convertPollCreationMessage(ctx, waMsg.PollCreationMessageV3)
+	//case waMsg.PollCreationMessageV4 != nil:
+	//	part, contextInfo = mc.convertPollCreationMessage(ctx, waMsg.PollCreationMessageV4)
+	case waMsg.PollCreationMessageV5 != nil:
+		part, contextInfo = mc.convertPollCreationMessage(ctx, waMsg.PollCreationMessageV5)
+	case waMsg.PollCreationMessageV6 != nil:
+		part, contextInfo = mc.convertPollCreationMessage(ctx, waMsg.PollCreationMessageV6)
 	case waMsg.PollUpdateMessage != nil:
-		part, contextInfo = mc.convertPollUpdateMessage(ctx, info, waMsg.PollUpdateMessage)
+		part, contextInfo = mc.convertPollUpdateMessage(ctx, info, origSource, waMsg.PollUpdateMessage)
 	case waMsg.EventMessage != nil:
 		part, contextInfo = mc.convertEventMessage(ctx, waMsg.EventMessage)
 	case waMsg.PinInChatMessage != nil:
@@ -212,6 +222,8 @@ func (mc *MessageConverter) ToMatrix(
 		part, contextInfo = mc.convertPlaceholderMessage(ctx, waMsg)
 	case waMsg.GroupInviteMessage != nil:
 		part, contextInfo = mc.convertGroupInviteMessage(ctx, info, waMsg.GroupInviteMessage)
+	case waMsg.MessageHistoryNotice != nil:
+		part, contextInfo = mc.convertMessageHistoryNotice(ctx, info, waMsg.MessageHistoryNotice)
 	case waMsg.ProtocolMessage != nil && waMsg.ProtocolMessage.GetType() == waE2E.ProtocolMessage_EPHEMERAL_SETTING:
 		part, contextInfo = mc.convertEphemeralSettingMessage(ctx, waMsg.ProtocolMessage, info.Timestamp, isBackfill)
 	case waMsg.EncCommentMessage != nil:
@@ -234,6 +246,9 @@ func (mc *MessageConverter) ToMatrix(
 		part.Extra["fi.mau.whatsapp.source_broadcast_list"] = info.Chat.String()
 	}
 	mc.addMentions(ctx, contextInfo.GetMentionedJID(), part.Content)
+	if contextInfo.GetNonJIDMentions() == 1 {
+		part.Content.Mentions.Room = true
+	}
 
 	cm := &bridgev2.ConvertedMessage{
 		Parts: []*bridgev2.ConvertedMessagePart{part},

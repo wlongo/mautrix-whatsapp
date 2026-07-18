@@ -2,22 +2,23 @@ module go.mau.fi/mautrix-whatsapp
 
 go 1.25.0
 
-toolchain go1.26.0
+toolchain go1.26.5
 
 tool go.mau.fi/util/cmd/maubuild
 
 require (
 	github.com/lib/pq v1.12.3
 	github.com/rs/zerolog v1.35.1
-	go.mau.fi/util v0.9.12-0.20260717235539-f9ffa7eca58d
-	go.mau.fi/webp v0.2.0
-	go.mau.fi/whatsmeow v0.0.0-20260305215846-fc65416c22c4
-	golang.org/x/image v0.36.0
+	github.com/tidwall/gjson v1.19.0
+	go.mau.fi/util v0.9.11
+	go.mau.fi/webp v0.3.0
+	go.mau.fi/whatsmeow v0.0.0-20260716095330-85d99080dee8
+	golang.org/x/image v0.44.0
 	golang.org/x/net v0.57.0
 	golang.org/x/sync v0.22.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.26.4-0.20260305215735-7836f35a1a74-WL
+	maunium.net/go/mautrix v0.29.0
 )
 
 require (
@@ -35,13 +36,12 @@ require (
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // indirect
-	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/vektah/gqlparser/v2 v2.5.27 // indirect
 	github.com/yuin/goldmark v1.8.4 // indirect
-	go.mau.fi/libsignal v0.2.1 // indirect
+	go.mau.fi/libsignal v0.2.2 // indirect
 	go.mau.fi/zeroconfig v0.2.0 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/exp v0.0.0-20260709172345-9ea1abe57597 // indirect
@@ -54,4 +54,4 @@ require (
 )
 
 // (WL) 2025-11-09 : Mautrix-Go now is using a local managed version
-replace maunium.net/go/mautrix => ./mod/mautrix-go
+// replace maunium.net/go/mautrix => ./mod/mautrix-go
